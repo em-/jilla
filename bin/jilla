@@ -11,6 +11,8 @@ var request = require('superagent');
 var span = require('span');
 var JSONStore = require('json-store');
 var askFor = require('ask-for');
+var Table = require('cli-table');
+var util = require('util');
 
 var cfg, db;
 
@@ -44,16 +46,16 @@ function ls() {
         res.body.errorMessages.join('\n')
       );
       var issues = res.body.issues;
-      var table = [];
+      var table = createTable();
       for (var i=0; i<issues.length; i++) {
         table.push([
           issues[i].key,
           '<'+issues[i].fields.reporter.name+'>',
-          {data: formatPrio(issues[i].fields.priority.name), right: true},
+          formatPrio(issues[i].fields.priority.name),
           issues[i].fields.summary
         ]);
       }
-      console.log(formatTable(table));
+      util.print(table.toString());
     })
   ;
 }
@@ -99,7 +101,7 @@ function log(issue, time) {
 function running() {
   var issues = db.get();
   if (JSON.stringify(issues) == '{}') return;
-  var table = [];
+  var table = createTable();
   for (var issue in issues) {
     var duration = Date.now()-issues[issue];
     if (duration < 60000) duration = 60000;
@@ -108,7 +110,7 @@ function running() {
       span(duration)
     ]);
   }
-  console.log(formatTable(table));
+  util.print(table.toString());
 }
 
 function resolve(issue) { transition(issue, 5);   }
@@ -125,16 +127,16 @@ function search(term) {
         res.body.errorMessages.join('\n')
       );
       var issues = res.body.issues;
-      var table = [];
+      var table = createTable();
       for (var i=0; i<issues.length; i++) {
         table.push([
           issues[i].key,
           '<'+issues[i].fields.reporter.name+'>',
-          {data: formatPrio(issues[i].fields.priority.name), right: true},
+          formatPrio(issues[i].fields.priority.name),
           issues[i].fields.summary
         ]);
       }
-      console.log(formatTable(table));
+      util.print(table.toString());
     })
   ;
 }
@@ -151,21 +153,20 @@ function describe(issue) {
       var fields = res.body.fields;
       var subtasks = fields.subtasks;
       var comments = fields.comment.comments;
-      var formatted = [];
+      var formatted = createTable();
       formatted.push(
-        ['Ticket:', res.body.key],
-        ['Summary:', field(fields, 'summary')],
-        ['Status:', field(fields, 'status.name')],
-        ['Reporter:', formatUser(fields.reporter)],
-        ['Assignee:', formatUser(fields.assignee)],
-        ['Labels:', limitWidth(fields.labels.join(', '), 66)],
-        ['Subtasks:', subtasks.length],
-        ['Comments:', comments.length],
-        ['Description:']
+        {'Ticket:': res.body.key},
+        {'Summary:': field(fields, 'summary')},
+        {'Status:': field(fields, 'status.name')},
+        {'Reporter:': formatUser(fields.reporter)},
+        {'Assignee:': formatUser(fields.assignee)},
+        {'Labels:': limitWidth(fields.labels.join(', '), 66)},
+        {'Subtasks:': subtasks.length},
+        {'Comments:': comments.length},
+        {'Description:': limitWidth(field(fields, 'description'), 70).trim() }
       );
-      var table = formatTable(formatted);
-      table += '\n\n' + indent(limitWidth(field(fields, 'description'), 70), 4) + '\n';
-      console.log(table);
+      var table = formatted.toString();
+      util.print(table.toString());
     });
 }
 
@@ -207,7 +208,7 @@ function subtasks(issue) {
       var fields = res.body.fields;
       var subtasks = fields.subtasks;
       if (subtasks.length) {
-         console.log(formatSubtasks(subtasks));
+         util.print(formatSubtasks(subtasks));
       }
       else {
         console.log('No Subtasks');
@@ -263,6 +264,35 @@ function usage() {
   console.log('');
 }
 
+function createTable() {
+  var table = new Table({
+    chars: {
+      'top': '',
+      'top-mid': '',
+      'top-left': '',
+      'top-right': '',
+      'bottom': '',
+      'bottom-mid': '',
+      'bottom-left': '',
+      'bottom-right': '',
+      'left': '',
+      'left-mid': '',
+      'mid': '',
+      'mid-mid': '',
+      'right': ' ',
+      'right-mid': '',
+      'left-mid': '',
+      'mid-mid': '',
+      'right-mid': ''
+    },
+    style: {
+      'padding-left': 0,
+      'padding-right': 0
+    }
+  });
+  return table;
+}
+
 function transition(issue, id, cb) {
   request
     .post(cfg.url+'rest/api/2/issue/'+issue+'/transitions')
@@ -275,59 +305,6 @@ function transition(issue, id, cb) {
       if (cb) cb();
     })
   ;
-}
-
-function formatTable(cols, options) {
-  var rowLengths = [];
-  var output = '';
-  options = options || {};
-
-  for (var i=0; i<cols.length; i++) {
-    for (var j=0; j<cols[i].length; j++) {
-      if (!rowLengths[j]) rowLengths[j] = 0;
-      if (typeof cols[i][j] != 'object') cols[i][j] = {data:cols[i][j]};
-      if (cols[i][j].data.length > rowLengths[j]) {
-        rowLengths[j] = cols[i][j].data.length;
-      }
-    }
-  }
-
-  for (var i=0; i<cols.length; i++) {
-    var col = '';
-    for (var j=0; j<cols[i].length; j++) {
-      if (j == cols[i].length-1) {
-        col += cols[i][j].data;
-        continue;
-      }
-      col += pad(
-        cols[i][j].data,
-        rowLengths[j],
-        {right: cols[i][j].right}
-      ) + ' ';
-    }
-    output += options.wrapText ? limitWidth(col, 80) : truncate(col, 79);
-    if (i < cols.length-1) output += '\n';
-  }
-
-  return output;
-
-  function pad(str, len, cfg) {
-    cfg = cfg || {};
-    cfg.character = cfg.character || ' ';
-    if (cfg.right) {
-      while(str.length < len) str = cfg.character + str;
-    } else {
-      while(str.length < len) str += cfg.character;
-    }
-    return str;
-  }
-
-  function truncate(str, len) {
-    if (str.length <= len) return str;
-    while (str.length > len-3) str = str.slice(0, -1);
-    str = pad(str, len, {character:'.'});
-    return str;
-  }
 }
 
 function formatPrio(name) {
@@ -441,16 +418,16 @@ function createIndent(len) {
 }
 
 function formatSubtasks(subtasks) {
-  var formatted = [];
+  var formatted = createTable();
   subtasks.forEach(function(task) {
     var status = parseInt(field(task, 'fields.status.id'), 10);
     var closed = status === CLOSED;
     formatted.push([
       field(task, 'key'),
-      (closed ? '  (\u2713)  ' : '       '),
+      (closed ? '\u2713': ' '),
       field(task, 'fields.summary')
     ]);
   });
-  return formatTable(formatted);
+  return formatted.toString();
 }
 
